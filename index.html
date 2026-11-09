@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>body{margin:0}[hidden]{display:none!important}</style></head><body><title>壓力小怪獸樂園</title>
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>body{margin:0}[hidden]{display:none!important}</style></head><body class="hide-names"><title>壓力小怪獸樂園</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&display=swap">
@@ -30,8 +30,12 @@ body {
   position: fixed; inset: 0;
   background: #e9cfa6;
   overflow: hidden;
-  touch-action: manipulation;
+  touch-action: none;
+  cursor: grab;
 }
+#stage.dragging { cursor: grabbing; }
+#world { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+body.viewer .host-only { display: none !important; }
 #map { position: absolute; left: 0; top: 0; z-index: 0; pointer-events: none; }
 .top {
   position: fixed; z-index: 5;
@@ -124,7 +128,17 @@ body {
   user-select: none;
   -webkit-user-select: none;
 }
-.m .body { display: block; transform-origin: 50% 100%; }
+.m { transform-origin: 0 0; }
+.m.relaxed img { filter: drop-shadow(0 0 7px rgba(255,214,120,.95)) drop-shadow(0 5px 4px rgba(70,50,25,.28)); }
+.m .mine-tag {
+  position: absolute; left: 50%; bottom: 100%;
+  transform: translate(-50%, -6px);
+  font-family: var(--font-display); font-weight: 900; font-size: clamp(12px, 0.8vw, 24px);
+  background: var(--accent); color: var(--accent-ink); border: 2px solid var(--line); border-radius: 999px;
+  padding: 0.1em 0.7em; white-space: nowrap; animation: bob 1.2s ease-in-out infinite;
+}
+@keyframes bob { 50% { transform: translate(-50%, -12px); } }
+.m .body { display: block; transform-origin: 50% 100%; will-change: transform; }
 .m img { display: block; width: 100%; height: auto; pointer-events: none; filter: drop-shadow(0 5px 4px rgba(70,50,25,.28)); -webkit-user-drag: none; }
 .m .shadow {
   position: absolute; left: 12%; right: 12%; bottom: -6px; height: 12%;
@@ -219,34 +233,36 @@ body.hide-names .m .name { display: none; }
 }
 </style>
 
-<div id="stage" aria-label="怪獸活動區"><canvas id="map" aria-hidden="true"></canvas></div>
+<div id="stage" aria-label="怪獸活動區"><div id="world"><canvas id="map" aria-hidden="true"></canvas></div></div>
 
 <div class="top">
   <div class="title">
     <h1>壓力小怪獸樂園</h1>
-    <p>點怪獸會跳起來・按「紓壓！」讓壓力變小</p>
+    <p>拖曳地圖看怪獸・點怪獸會跳起來・按「陪牠放鬆」讓怪獸放鬆下來</p>
   </div>
   <div class="count" id="count" aria-live="polite">怪獸 0 隻</div>
 </div>
 
 <div class="bar" role="toolbar" aria-label="控制列">
-  <label class="btn primary" for="file">＋ 加入怪獸
+  <label class="btn primary host-only" for="file">＋ 加入怪獸
     <input type="file" id="file" accept="image/*" multiple>
   </label>
-  <label class="slider" for="cut"><span>去白底</span>
+  <label class="slider host-only" for="cut"><span>去白底</span>
     <input type="range" id="cut" min="0" max="100" value="60" aria-label="去白底強度">
   </label>
-  <button type="button" id="names" aria-pressed="true">名字</button>
+  <button type="button" id="names" aria-pressed="false">名字</button>
   <span class="sep" aria-hidden="true"></span>
-  <button type="button" class="calm" id="relax">紓壓！</button>
-  <button type="button" id="revive">全部回來</button>
+  <button type="button" class="calm" id="relax">陪牠放鬆 ♪</button>
+  <button type="button" id="revive">重來</button>
   <span class="sep" aria-hidden="true"></span>
-  <button type="button" id="qrBtn" hidden>QR code</button>
+  <button type="button" class="host-only" id="qrBtn" hidden>QR code</button>
+  <button type="button" class="primary" id="findMe" hidden>找我的怪獸</button>
+  <button type="button" id="fit">全圖</button>
   <button type="button" id="full">全螢幕</button>
-  <button type="button" id="clear">清空・新場次</button>
+  <button type="button" class="host-only" id="clear">清空・新場次</button>
 </div>
 
-<div class="qr-chip" id="qrChip" hidden title="放大 QR code">
+<div class="qr-chip host-only" id="qrChip" hidden title="放大 QR code">
   <div class="qr" id="qrSmall"></div>掃我上傳怪獸
 </div>
 <div class="qr-big" id="qrBig" hidden>
@@ -263,6 +279,7 @@ body.hide-names .m .name { display: none; }
 <script>
 (() => {
   const stage = document.getElementById('stage');
+  const world = document.getElementById('world');
   const countEl = document.getElementById('count');
   const fileInput = document.getElementById('file');
   const cutInput = document.getElementById('cut');
@@ -279,7 +296,7 @@ body.hide-names .m .name { display: none; }
   const rough = '<defs><filter id="r" x="-10%" y="-10%" width="120%" height="120%"><feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="4"/><feDisplacementMap in="SourceGraphic" scale="5"/></filter></defs>';
   const wrap = (inner) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 240">${rough}<g filter="url(#r)" fill="#fff" stroke="${INK}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">${inner}</g></svg>`;
   const samples = [
-    { name: '想太多怪', weak: '寫下來就好', svg: wrap(`
+    { name: '想太多怪', weak: '聽音樂', svg: wrap(`
       <path d="M50 225 C35 160 30 80 70 45 C100 20 140 22 165 55 C195 95 190 165 175 225 L150 210 L128 228 L108 208 L86 228 L66 208 Z"/>
       <circle cx="92" cy="85" r="15"/><circle cx="96" cy="88" r="5" fill="${INK}"/>
       <circle cx="140" cy="80" r="11"/><circle cx="138" cy="83" r="4" fill="${INK}"/>
@@ -288,7 +305,7 @@ body.hide-names .m .name { display: none; }
       <circle cx="152" cy="122" r="9"/><circle cx="150" cy="124" r="3" fill="${INK}"/>
       <path d="M100 160 Q115 150 132 160" fill="none"/>
       <path d="M70 180 l10 -10 M85 190 l10 -10 M150 185 l10 -10 M160 198 l8 -8" fill="none" stroke-width="3"/>`) },
-    { name: '作業長角獸', weak: '先做五分鐘', svg: wrap(`
+    { name: '作業長角獸', weak: '散步一下', svg: wrap(`
       <path d="M70 70 L52 8 L95 58 Z"/><path d="M150 70 L168 8 L125 58 Z"/>
       <rect x="45" y="55" width="130" height="135" rx="40"/>
       <path d="M60 190 L60 230 M95 190 L95 228 M125 190 L125 228 M160 190 L160 230" fill="none"/>
@@ -297,7 +314,7 @@ body.hide-names .m .name { display: none; }
       <path d="M85 160 L135 160" fill="none"/>
       <path d="M92 153 L92 167 M104 153 L104 167 M116 153 L116 167 M128 153 L128 167" fill="none" stroke-width="3"/>
       <path d="M150 75 l12 12 M156 92 l12 12" fill="none" stroke-width="3"/>`) },
-    { name: '完美皇冠怪', weak: '八十分就好', svg: wrap(`
+    { name: '完美皇冠怪', weak: '吃甜點', svg: wrap(`
       <path d="M70 72 L78 30 L98 56 L110 22 L122 56 L142 30 L150 72 Z"/>
       <ellipse cx="110" cy="138" rx="72" ry="66"/>
       <path d="M80 200 L72 232 M140 200 L148 232" fill="none"/>
@@ -305,7 +322,7 @@ body.hide-names .m .name { display: none; }
       <ellipse cx="135" cy="128" rx="14" ry="18"/><circle cx="132" cy="133" r="6" fill="${INK}"/>
       <path d="M92 170 Q110 162 128 170" fill="none"/>
       <path d="M60 155 l10 -10 M66 170 l10 -10 M150 158 l10 -10 M154 172 l8 -8" fill="none" stroke-width="3"/>`) },
-    { name: '拖延刺刺怪', weak: '設計時器', svg: wrap(`
+    { name: '拖延刺刺怪', weak: '睡個午覺', svg: wrap(`
       <path d="M110 30 L124 62 L156 46 L152 82 L188 88 L164 114 L190 140 L156 148 L162 184 L128 172 L110 205 L92 172 L58 184 L64 148 L30 140 L56 114 L32 88 L68 82 L64 46 L96 62 Z"/>
       <path d="M86 108 m-12 0 a12 12 0 1 0 24 0 a8 8 0 1 0 -16 0 a4 4 0 1 0 8 0" fill="none" stroke-width="4"/>
       <path d="M134 108 m-12 0 a12 12 0 1 0 24 0 a8 8 0 1 0 -16 0 a4 4 0 1 0 8 0" fill="none" stroke-width="4"/>
@@ -316,11 +333,21 @@ body.hide-names .m .name { display: none; }
   // ---------- helpers ----------
   const rand = (a, b) => a + Math.random() * (b - a);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const W = () => stage.clientWidth;
-  const H = () => stage.clientHeight;
+  const VW = () => stage.clientWidth;
+  const VH = () => stage.clientHeight;
+  // wide screens show the whole park at once; phones get a 16:9 park they can drag around
+  const bigScreen = () => VW() >= 900 && VW() / VH() >= 1.2;
+  let worldW = 1600, worldH = 900;
+  function sizeWorld() {
+    if (bigScreen()) { worldW = VW(); worldH = VH(); }
+    else { worldH = Math.max(VH(), 900); worldW = Math.round(worldH * 16 / 9); }
+    world.style.width = worldW + 'px'; world.style.height = worldH + 'px';
+  }
+  const W = () => worldW;
+  const H = () => worldH;
   // play area: keep clear of title (top) and toolbar (bottom)
-  const topPad = () => Math.min(110, H() * 0.16);
-  const botPad = () => { const bar = document.querySelector('.bar'); return (bar ? bar.offsetHeight : 60) + 34; };
+  const topPad = () => bigScreen() ? Math.min(110, H() * 0.16) : 20;
+  const botPad = () => { if (!bigScreen()) return 20; const bar = document.querySelector('.bar'); return (bar ? bar.offsetHeight : 60) + 34; };
 
   function toast(msg) {
     toastEl.textContent = msg;
@@ -354,6 +381,118 @@ body.hide-names .m .name { display: none; }
     return o;
   };
 
+  // paper remover that copes with shadows: compare each pixel with the local paper brightness
+  function removePaper(d, w, h, strength) {
+    const n = w * h;
+    const L = new Float32Array(n);
+    for (let k = 0, i = 0; k < n; k++, i += 4) L[k] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    // 1) estimate how bright the paper is in each small block (bright percentile)
+    const B = Math.max(8, Math.round(Math.max(w, h) / 24));
+    const gw = Math.ceil(w / B), gh = Math.ceil(h / B);
+    let grid = new Float32Array(gw * gh);
+    const vals = [];
+    for (let gy = 0; gy < gh; gy++) for (let gx = 0; gx < gw; gx++) {
+      vals.length = 0;
+      for (let y = gy * B; y < Math.min(h, gy * B + B); y++) for (let x = gx * B; x < Math.min(w, gx * B + B); x++) vals.push(L[y * w + x]);
+      vals.sort((a, b) => a - b);
+      grid[gy * gw + gx] = vals[Math.floor(vals.length * 0.85)];
+    }
+    // 2) blocks covered by ink or colour are not paper: refill them from paper neighbours
+    const sorted = Array.from(grid).sort((a, b) => a - b);
+    const ref = sorted[Math.floor(sorted.length * 0.9)] || 255;
+    const ok = new Uint8Array(gw * gh);
+    for (let k = 0; k < grid.length; k++) ok[k] = grid[k] > ref * 0.55 ? 1 : 0;
+    for (let pass = 0; pass < gw + gh; pass++) {
+      let changed = false;
+      const next = grid.slice(), nok = ok.slice();
+      for (let gy = 0; gy < gh; gy++) for (let gx = 0; gx < gw; gx++) {
+        const k = gy * gw + gx; if (ok[k]) continue;
+        let s = 0, c = 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const x = gx + dx, y = gy + dy; if (x < 0 || y < 0 || x >= gw || y >= gh) continue;
+          const q = y * gw + x; if (ok[q]) { s += grid[q]; c++; }
+        }
+        if (c) { next[k] = s / c; nok[k] = 1; changed = true; }
+      }
+      grid = next; ok.set(nok);
+      if (!changed) break;
+    }
+    for (let k = 0; k < grid.length; k++) if (!ok[k]) grid[k] = ref;
+    // smooth twice
+    for (let pass = 0; pass < 2; pass++) {
+      const next = new Float32Array(grid.length);
+      for (let gy = 0; gy < gh; gy++) for (let gx = 0; gx < gw; gx++) {
+        let s = 0, c = 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const x = gx + dx, y = gy + dy; if (x < 0 || y < 0 || x >= gw || y >= gh) continue;
+          s += grid[y * gw + x]; c++;
+        }
+        next[gy * gw + gx] = s / c;
+      }
+      grid = next;
+    }
+    const bgAt = (x, y) => {
+      const fx = Math.min(gw - 1, Math.max(0, x / B - 0.5)), fy = Math.min(gh - 1, Math.max(0, y / B - 0.5));
+      const x0 = Math.floor(fx), y0 = Math.floor(fy), x1 = Math.min(gw - 1, x0 + 1), y1 = Math.min(gh - 1, y0 + 1);
+      const tx = fx - x0, ty = fy - y0;
+      const a = grid[y0 * gw + x0] * (1 - tx) + grid[y0 * gw + x1] * tx;
+      const b = grid[y1 * gw + x0] * (1 - tx) + grid[y1 * gw + x1] * tx;
+      return Math.max(1, a * (1 - ty) + b * ty);
+    };
+    // 3) a pixel is paper when it is nearly as bright as the paper around it and not colourful
+    const cut = 1 - (0.06 + (strength / 100) * 0.28);
+    const ratio = new Float32Array(n);
+    const paper = new Uint8Array(n);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const k = y * w + x, i = k * 4;
+      const bg = bgAt(x, y);
+      const r = L[k] / bg;
+      const chroma = (Math.max(d[i], d[i + 1], d[i + 2]) - Math.min(d[i], d[i + 1], d[i + 2])) / bg;
+      ratio[k] = r;
+      paper[k] = r > cut && chroma < 0.22 ? 1 : 0;
+    }
+    // 4) flood from the photo edges so white parts inside the drawing stay
+    const gone = new Uint8Array(n);
+    const stack = new Int32Array(n);
+    let sp = 0;
+    const push = (k) => { if (!gone[k] && paper[k]) { gone[k] = 1; stack[sp++] = k; } };
+    for (let x = 0; x < w; x++) { push(x); push((h - 1) * w + x); }
+    for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1); }
+    while (sp) {
+      const k = stack[--sp], x = k % w;
+      if (x > 0) push(k - 1); if (x < w - 1) push(k + 1);
+      if (k >= w) push(k - w); if (k < n - w) push(k + w);
+    }
+    for (let k = 0; k < n; k++) if (gone[k]) d[k * 4 + 3] = 0;
+    // soft edge on pixels touching removed paper
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const k = y * w + x; if (gone[k]) continue;
+      const near = (x > 0 && gone[k - 1]) || (x < w - 1 && gone[k + 1]) || (y > 0 && gone[k - w]) || (y < h - 1 && gone[k + w]);
+      if (near) d[k * 4 + 3] = Math.round(d[k * 4 + 3] * Math.min(1, Math.max(0.3, (cut - ratio[k]) / 0.1 + 0.3)));
+    }
+    // 5) drop tiny leftover specks (paper grain, dust)
+    const label = new Int32Array(n).fill(-1);
+    const sizes = [];
+    for (let s = 0; s < n; s++) {
+      if (label[s] !== -1 || d[s * 4 + 3] === 0) continue;
+      const id = sizes.length; let size = 0; sp = 0; stack[sp++] = s; label[s] = id;
+      while (sp) {
+        const k = stack[--sp], x = k % w; size++;
+        const nb = [x > 0 ? k - 1 : -1, x < w - 1 ? k + 1 : -1, k >= w ? k - w : -1, k < n - w ? k + w : -1];
+        for (const q of nb) if (q >= 0 && label[q] === -1 && d[q * 4 + 3] > 0) { label[q] = id; stack[sp++] = q; }
+      }
+      sizes.push(size);
+    }
+    const biggest = Math.max(0, ...sizes);
+    const minKeep = Math.max(25, biggest * 0.01);
+    let minX = w, minY = h, maxX = -1, maxY = -1;
+    for (let k = 0; k < n; k++) {
+      if (label[k] >= 0 && sizes[label[k]] < minKeep) { d[k * 4 + 3] = 0; continue; }
+      if (d[k * 4 + 3] > 24) { const x = k % w, y = (k - x) / w; if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+    }
+    return { minX, minY, maxX, maxY };
+  }
+
   // ---------- background removal ----------
   function processImage(img, strength) {
     const maxSide = 420;
@@ -367,31 +506,8 @@ body.hide-names .m .name { display: none; }
     if (strength <= 0) return c.toDataURL('image/png');
     const data = ctx.getImageData(0, 0, w, h);
     const d = data.data;
-    // strength 0..100 → brightness threshold 250..150
-    const T = 250 - strength;
-    const soft = 28;
-    let minX = w, minY = h, maxX = -1, maxY = -1;
-    // flood-fill from the photo's edges: only paper connected to the border turns clear,
-    // so white parts inside the drawing (eyes, teeth) stay
-    const isPaper = (p) => { const r = d[p], g = d[p + 1], b = d[p + 2]; return Math.max(r, g, b) - Math.min(r, g, b) < 45 && (r + g + b) / 3 > T - soft; };
-    const seen = new Uint8Array(w * h);
-    const stack = new Int32Array(w * h);
-    let sp = 0;
-    const push = (x, y) => { const k = y * w + x; if (!seen[k] && isPaper(k * 4)) { seen[k] = 1; stack[sp++] = k; } };
-    for (let x = 0; x < w; x++) { push(x, 0); push(x, h - 1); }
-    for (let y = 0; y < h; y++) { push(0, y); push(w - 1, y); }
-    while (sp) {
-      const k = stack[--sp], x = k % w, y = (k - x) / w, i = k * 4;
-      const light = (d[i] + d[i + 1] + d[i + 2]) / 3;
-      const a = light >= T ? 0 : 1 - (light - (T - soft)) / soft;
-      d[i + 3] = Math.round(d[i + 3] * a);
-      if (x > 0) push(x - 1, y); if (x < w - 1) push(x + 1, y);
-      if (y > 0) push(x, y - 1); if (y < h - 1) push(x, y + 1);
-    }
-    minX = w; minY = h; maxX = -1; maxY = -1;
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-      if (d[(y * w + x) * 4 + 3] > 24) { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
-    }
+    const { minX: x0, minY: y0, maxX: x1, maxY: y1 } = removePaper(d, w, h, strength);
+    let minX = x0, minY = y0, maxX = x1, maxY = y1;
     ctx.putImageData(data, 0, 0);
     if (maxX < 0) return c.toDataURL('image/png');
     const pad = 4;
@@ -405,20 +521,21 @@ body.hide-names .m .name { display: none; }
   }
 
   // ---------- monster creation ----------
-  function makeMonster({ src, name, weak = '', sample = false, original = null }) {
+  function makeMonster({ src, name, weak = '', sample = false, original = null, docId = null }) {
     const el = document.createElement('div');
     el.className = 'm';
     el.tabIndex = 0;
     el.setAttribute('role', 'button');
     el.innerHTML = '<span class="shadow"></span><span class="body"><img alt=""></span><span class="name"></span>';
     const img = el.querySelector('img');
+    const bodyEl = el.querySelector('.body');
     img.src = src;
     el.querySelector('.name').textContent = name || '';
     el.setAttribute('aria-label', (name || '怪獸') + '，按一下跳起來');
-    stage.appendChild(el);
+    world.appendChild(el);
 
     const m = {
-      el, img, name, weak, sample, original, hiddenByHost: false,
+      el, img, bodyEl, name, weak, sample, original, docId, hiddenByHost: false,
       x: rand(40, Math.max(60, W() - 200)),
       y: rand(topPad(), Math.max(topPad() + 10, H() - botPad() - 160)),
       vx: rand(-1, 1), vy: rand(-0.6, 0.6),
@@ -431,27 +548,24 @@ body.hide-names .m .name { display: none; }
       nextTurn: performance.now() + rand(1500, 4500),
       pause: 0,
       flip: 1,
-      gone: false,
+      gone: false, calm: 0,
       w: 120, h: 120
     };
     const norm = Math.hypot(m.vx, m.vy) || 1; m.vx /= norm; m.vy /= norm;
 
     const poke = (ev) => {
       if (ev) ev.preventDefault();
+      if (ev && ev.type === 'click' && view.justDragged) return;
       if (m.gone) return;
       m.jumpT = 0.0001;
       hearts(m, 3, false);
-      const line = [m.name, m.weak ? '弱點：' + m.weak : ''].filter(Boolean).join('・');
+      follow(m);
+      const line = [m.name, m.weak ? '喜歡：' + m.weak : ''].filter(Boolean).join('・');
       if (line) bubble(m, line);
     };
     el.addEventListener('click', poke);
     el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') poke(e); });
     el.addEventListener('mouseenter', () => { m.wiggleT = 0.0001; });
-    el.addEventListener('dblclick', () => {
-      // presenter can hide an unsuitable upload from the screen
-      m.hiddenByHost = true; m.gone = true; m.el.style.visibility = 'hidden'; update();
-      toast('已隱藏這隻怪獸');
-    });
 
     monsters.push(m);
     return m;
@@ -508,12 +622,12 @@ body.hide-names .m .name { display: none; }
     for (let i = 0; i < n; i++) {
       const s = document.createElement('span');
       s.className = 'heart' + (calm ? ' calm' : '');
-      s.textContent = calm ? '✿' : '♥';
+      s.textContent = calm ? ['♪', '♫', '✿'][Math.floor(Math.random() * 3)] : '♥';
       s.style.left = (cx + rand(-m.w * 0.3, m.w * 0.3)) + 'px';
       s.style.top = (m.y + m.h * 0.3 + rand(-10, 10)) + 'px';
       s.style.setProperty('--dx', rand(-40, 40) + 'px');
       s.style.animationDelay = (i * 0.08) + 's';
-      stage.appendChild(s);
+      world.appendChild(s);
       setTimeout(() => s.remove(), 1600 + i * 80);
     }
   }
@@ -524,36 +638,31 @@ body.hide-names .m .name { display: none; }
     b.textContent = text;
     b.style.left = (m.x + m.w / 2) + 'px';
     b.style.top = Math.max(8, m.y + m.h * (1 - m.scale) - 46) + 'px';
-    stage.appendChild(b);
+    world.appendChild(b);
     setTimeout(() => b.remove(), 1700);
   }
 
   function relax() {
-    const alive = monsters.filter(m => !m.gone && !m.hiddenByHost);
-    if (!alive.length) { toast('壓力都清光了！按「全部回來」再玩一次'); return; }
-    alive.forEach(m => {
-      m.targetScale *= 0.72;
+    if (!monsters.length) return;
+    if (monsters.every(m => m.calm >= 1)) {
+      monsters.forEach(m => hearts(m, 2, true));
+      toast('大家都放鬆下來了 ♪');
+      return;
+    }
+    monsters.forEach(m => {
+      m.calm = Math.min(1, m.calm + 0.34);
       m.jumpT = 0.0001;
-      hearts(m, 2, true);
-      if (m.targetScale < 0.3) {
-        m.gone = true;
-        relaxedCount++;
-        setTimeout(() => { hearts(m, 6, true); m.el.style.visibility = 'hidden'; }, 350);
-      }
+      hearts(m, 3, true);
+      m.el.classList.toggle('relaxed', m.calm >= 1);
     });
     update();
-    setTimeout(resize, 400);
+    if (monsters.every(m => m.calm >= 1)) toast('大家都放鬆下來了 ♪ 壓力還在，但我們學會陪它了');
   }
 
   function revive() {
-    monsters.forEach(m => {
-      if (m.hiddenByHost) return;
-      m.gone = false; m.targetScale = 1; m.scale = Math.min(m.scale, 0.2);
-      m.el.style.visibility = '';
-      m.x = clamp(m.x, 0, Math.max(0, W() - m.w)); m.y = clamp(m.y, topPad(), Math.max(topPad(), H() - botPad() - m.h));
-    });
-    relaxedCount = 0;
-    resize(); update();
+    monsters.forEach(m => { m.calm = 0; m.el.classList.remove('relaxed'); });
+    update();
+    toast('怪獸們又緊張起來了，再陪牠們放鬆一次吧');
   }
 
   function clearAll() {
@@ -568,10 +677,10 @@ body.hide-names .m .name { display: none; }
   }
 
   function update() {
-    const alive = monsters.filter(m => !m.gone && !m.sample).length;
-    const total = monsters.filter(m => !m.sample && !m.hiddenByHost).length;
-    if (!total) { countEl.innerHTML = '範例怪獸 ' + monsters.filter(m => m.sample && !m.gone).length + ' 隻'; return; }
-    countEl.innerHTML = `怪獸 ${alive} 隻` + (relaxedCount ? `・已紓壓 <b>${relaxedCount}</b>` : '');
+    const real = monsters.filter(m => !m.sample);
+    const list = real.length ? real : monsters;
+    const calm = list.filter(m => m.calm >= 1).length;
+    countEl.innerHTML = (real.length ? `怪獸 ${real.length} 隻` : `範例怪獸 ${monsters.length} 隻`) + (calm ? `・已放鬆 <b>${calm}</b>` : '');
   }
 
   function resize() {
@@ -631,11 +740,86 @@ body.hide-names .m .name { display: none; }
     return 0.94 + t * 0.1;
   };
 
+  // ---------- drag & zoom the park ----------
+  const view = { s: 1, x: 0, y: 0, justDragged: false, follow: null, followScale: 1 };
+  const fitScale = () => Math.max(VW() / W(), VH() / H());
+  function applyView() {
+    const s = view.s;
+    view.x = W() * s <= VW() ? (VW() - W() * s) / 2 : clamp(view.x, VW() - W() * s, 0);
+    view.y = H() * s <= VH() ? (VH() - H() * s) / 2 : clamp(view.y, VH() - H() * s, 0);
+    world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${s})`;
+  }
+  function resetView() {
+    stopFollow();
+    view.s = fitScale();
+    view.x = (VW() - W() * view.s) / 2; view.y = (VH() - H() * view.s) / 2;
+    applyView();
+  }
+  function zoomAt(cx, cy, factor) {
+    const ns = clamp(view.s * factor, fitScale(), fitScale() * 4);
+    const k = ns / view.s;
+    view.x = cx - (cx - view.x) * k; view.y = cy - (cy - view.y) * k; view.s = ns;
+    applyView();
+  }
+  const pointers = new Map();
+  let drag = null;
+  stage.addEventListener('pointerdown', (e) => {
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 1) drag = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, moved: false };
+    else if (pointers.size === 2) { stopFollow(); const [a, b] = [...pointers.values()]; drag = { pinch: Math.hypot(a.x - b.x, a.y - b.y) || 1, s: view.s, moved: true }; }
+  });
+  window.addEventListener('pointermove', (e) => {
+    if (!pointers.has(e.pointerId) || !drag) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size >= 2 && drag.pinch) {
+      const [a, b] = [...pointers.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, (drag.s * d / drag.pinch) / view.s);
+    } else if (pointers.size === 1 && !drag.pinch) {
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (!drag.moved && Math.hypot(dx, dy) > 6) { drag.moved = true; stopFollow(); stage.classList.add('dragging'); }
+      if (drag.moved) { view.x = drag.vx + dx; view.y = drag.vy + dy; applyView(); }
+    }
+  });
+  const endPointer = (e) => {
+    pointers.delete(e.pointerId);
+    if (!pointers.size) {
+      if (drag && drag.moved) { view.justDragged = true; setTimeout(() => { view.justDragged = false; }, 60); }
+      drag = null; stage.classList.remove('dragging');
+    } else if (pointers.size === 1) {
+      const [p] = [...pointers.values()];
+      drag = { x: p.x, y: p.y, vx: view.x, vy: view.y, moved: true };
+    }
+  };
+  window.addEventListener('pointerup', endPointer);
+  window.addEventListener('pointercancel', endPointer);
+  stage.addEventListener('wheel', (e) => { e.preventDefault(); stopFollow(); zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.12 : 1 / 1.12); }, { passive: false });
+
+
+  // ---------- camera follow ----------
+  function follow(m) {
+    if (!m) return;
+    view.follow = m;
+    view.followScale = Math.max(view.s, fitScale() * (bigScreen() ? 2.4 : 2));
+  }
+  function stopFollow() { view.follow = null; }
+  function followStep(dt) {
+    const m = view.follow;
+    if (!m) return;
+    const k = Math.min(1, dt * 4);
+    view.s += (view.followScale - view.s) * k;
+    const cx = m.x + m.w / 2, cy = m.y + m.h * 0.6;
+    view.x += (VW() / 2 - cx * view.s - view.x) * k;
+    view.y += (VH() / 2 - cy * view.s - view.y) * k;
+    applyView();
+  }
+
   // ---------- animation loop ----------
   let last = performance.now();
   function tick(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
+    followStep(dt);
     const B0 = MAP.bounds || { t: 0, b: H() };
     const minY = Math.max(topPad(), B0.t), maxYb = Math.min(H() - botPad(), B0.b);
     for (const m of monsters) {
@@ -650,7 +834,7 @@ body.hide-names .m .name { display: none; }
         m.vx = Math.cos(ang); m.vy = Math.sin(ang) * 0.7;
         m.nextTurn = now + rand(2000, 5000);
       }
-      const sp = reduced ? m.speed * 0.4 : m.speed;
+      const sp = (reduced ? m.speed * 0.4 : m.speed) * (1 - 0.65 * m.calm);
       if (moving) { m.x += m.vx * sp * dt; m.y += m.vy * sp * dt; }
 
       const mw = m.w, mh = m.h;
@@ -662,12 +846,13 @@ body.hide-names .m .name { display: none; }
       avoidPond(m);
       if (Math.abs(m.vx) > 0.15) m.flip = m.vx < 0 ? -1 : 1;
 
-      m.phase += dt * m.bobRate * (moving ? 1 : 0.5);
+      m.phase += dt * m.bobRate * (moving ? 1 : 0.5) * (1 - 0.45 * m.calm);
+      if (m.calm >= 1 && Math.random() < dt * 0.08) hearts(m, 1, true);
       const bob = reduced ? 0 : Math.abs(Math.sin(m.phase));
       let sx = 1 + (reduced ? 0 : (1 - bob) * 0.06);
       let sy = 1 - (reduced ? 0 : (1 - bob) * 0.06);
       let lift = moving ? bob * mh * 0.06 : bob * mh * 0.02;
-      let rot = 0;
+      let rot = reduced ? 0 : Math.sin(m.phase * 0.5) * 6 * m.calm;
 
       if (m.jumpT > 0) {
         m.jumpT += dt / 0.6;
@@ -678,7 +863,7 @@ body.hide-names .m .name { display: none; }
       }
       if (m.wiggleT > 0) {
         m.wiggleT += dt / 0.5;
-        rot = Math.sin(m.wiggleT * Math.PI * 4) * 8 * (1 - Math.min(1, m.wiggleT));
+        rot += Math.sin(m.wiggleT * Math.PI * 4) * 8 * (1 - Math.min(1, m.wiggleT));
         if (m.wiggleT >= 1) m.wiggleT = 0;
       }
 
@@ -687,9 +872,8 @@ body.hide-names .m .name { display: none; }
       const ox = m.x + mw * (1 - sc) / 2;
       const oy = m.y + mh * (1 - sc);
       m.el.style.transform = `translate(${ox}px, ${oy}px) scale(${sc})`;
-      m.el.style.transformOrigin = '0 0';
-      m.el.style.zIndex = String(Math.round(m.y + mh));
-      m.el.querySelector('.body').style.transform =
+      const z = Math.round(m.y + mh); if (z !== m.z) { m.z = z; m.el.style.zIndex = String(z); }
+      m.bodyEl.style.transform =
         `translateY(${-lift}px) rotate(${rot}deg) scale(${sx * m.flip}, ${sy})`;
     }
     requestAnimationFrame(tick);
@@ -715,6 +899,7 @@ body.hide-names .m .name { display: none; }
     document.body.classList.toggle('hide-names', !on);
   });
   document.getElementById('relax').addEventListener('click', relax);
+  document.getElementById('fit').addEventListener('click', resetView);
   document.getElementById('revive').addEventListener('click', revive);
   document.getElementById('clear').addEventListener('click', clearAll);
   document.getElementById('full').addEventListener('click', async () => {
@@ -741,25 +926,33 @@ body.hide-names .m .name { display: none; }
     const files = [...(e.clipboardData?.files || [])];
     if (files.length) addFiles(files);
   });
-  window.addEventListener('resize', () => { drawMap(); resize(); });
+  window.addEventListener('resize', () => { sizeWorld(); drawMap(); resize(); resetView(); });
 
   window.MonsterPark = {
     toast,
-    addRemote(src, name, weak) {
+    follow, stopFollow,
+    findDoc(id) { return monsters.find(m => m.docId === id) || null; },
+    markMine(m) { if (!m || m.el.querySelector('.mine-tag')) return; const t = document.createElement('span'); t.className = 'mine-tag'; t.textContent = '你的怪獸'; m.el.appendChild(t); },
+    addRemote(src, name, weak, docId) {
       removeSamples();
-      const m = makeMonster({ src, name: (name || '').slice(0, 16), weak: (weak || '').slice(0, 20) });
+      const m = makeMonster({ src, name: (name || '').slice(0, 16), weak: (weak || '').slice(0, 20), docId });
       m.x = rand(0, Math.max(0, W() - 200));
       m.y = topPad();
       m.scale = 0.01;
       m.jumpT = 0.0001;
       resize(); update();
       setTimeout(() => { hearts(m, 5, false); bubble(m, (name || '新怪獸') + ' 來了！'); }, 300);
+      if (window.MonsterPark.onAdded) window.MonsterPark.onAdded(m);
+      return m;
     },
     onClear: null
   };
 
+  sizeWorld();
   drawMap();
+  resetView();
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(drawMap);
+  document.body.classList.add('hide-names');
   addSamples();
   update();
   requestAnimationFrame(tick);
@@ -780,10 +973,15 @@ if (!configured) {
   const db = getFirestore(app);
 
   const newCode = () => Math.random().toString(36).slice(2, 7).toUpperCase();
-  let room;
-  try { room = localStorage.getItem('monster-room'); } catch (e) {}
-  if (!room) room = newCode();
-  const save = () => { try { localStorage.setItem('monster-room', room); } catch (e) {} };
+  // ?room=CODE opens the map as a viewer (phones), otherwise this is the host screen
+  const urlRoom = (new URLSearchParams(location.search).get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
+  const viewer = !!urlRoom;
+  let room = urlRoom;
+  if (!viewer) {
+    try { room = localStorage.getItem('monster-room'); } catch (e) {}
+    if (!room) room = newCode();
+  }
+  const save = () => { if (viewer) return; try { localStorage.setItem('monster-room', room); } catch (e) {} };
   save();
 
   const uploadUrl = () => new URL('upload.html?room=' + room, location.href).href;
@@ -804,7 +1002,26 @@ if (!configured) {
     document.getElementById('roomCode').textContent = room;
     large.nextElementSibling.title = url;
   }
-  chip.hidden = false; btn.hidden = false;
+  if (viewer) {
+    document.body.classList.add('viewer');
+    setTimeout(() => P.toast('正在看場次 ' + room + ' 的怪獸地圖'), 500);
+    let mine = [];
+    try { mine = JSON.parse(localStorage.getItem('my-monsters-' + room) || '[]'); } catch (e) {}
+    const findBtn = document.getElementById('findMe');
+    if (mine.length) {
+      findBtn.hidden = false;
+      let turn = 0;
+      P.onAdded = (m) => { if (mine.includes(m.docId)) P.markMine(m); };
+      findBtn.addEventListener('click', () => {
+        const found = mine.map(id => P.findDoc(id)).filter(Boolean);
+        if (!found.length) { P.toast('還沒找到你的怪獸，稍等一下再按一次'); return; }
+        const m = found[turn % found.length]; turn++;
+        P.follow(m);
+        P.toast((m.name || '你的怪獸') + ' 在這裡！拖曳地圖或按「全圖」就能離開');
+      });
+    }
+  }
+  else { chip.hidden = false; btn.hidden = false; }
   chip.addEventListener('click', () => { big.hidden = false; });
   btn.addEventListener('click', () => { big.hidden = !big.hidden; });
   big.addEventListener('click', () => { big.hidden = true; });
@@ -822,7 +1039,7 @@ if (!configured) {
         seen.add(c.doc.id);
         const d = c.doc.data();
         if (typeof d.img !== 'string' || !d.img.startsWith('data:image/')) return;
-        setTimeout(() => P.addRemote(d.img, String(d.name || ''), String(d.weak || '')), i * 120);
+        setTimeout(() => P.addRemote(d.img, String(d.name || ''), String(d.weak || ''), c.doc.id), i * 120);
       });
     }, () => P.toast('連不上雲端資料庫，請檢查網路或 Firebase 設定'));
   }
